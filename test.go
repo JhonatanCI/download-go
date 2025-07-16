@@ -1,10 +1,12 @@
 package main
 
 import (
-
 	"fmt"
+	"math/rand"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
 	"tuproyecto/database"
 
 	"github.com/joho/godotenv"
@@ -22,67 +24,80 @@ func main() {
 
 	idFolder := 3
 
-	// Carpeta temporal
-	tempDir := "/tmp/expediente_temp/"
-
-	// Carpeta final donde guardar el ZIP
-	finalZipPath := "/usr/bin/fd_cloud/temp/expediente.zip"
-
-	// Crear carpeta temporal
-	if err := exec.Command("sudo", "mkdir", "-p", tempDir).Run(); err != nil {
-		panic(fmt.Sprintf("❌ No se pudo crear carpeta temporal: %v", err))
-	}
-
+	// Obtener estructura de carpetas para saber el nombre raíz
 	folderList, err := obtenerCarpetas(idFolder)
 	if err != nil {
 		panic(err)
 	}
 
+	var rootName string
+	for _, f := range folderList {
+		if f["id"] == fmt.Sprintf("%d", idFolder) {
+			rootName = f["name"]
+			break
+		}
+	}
+	if rootName == "" {
+		panic(fmt.Sprintf("❌ No se encontró el nombre de la carpeta con ID %d", idFolder))
+	}
+
+	safeName := strings.ReplaceAll(rootName, " ", "_")
+
+	// Crear ID aleatorio para subcarpeta
+	rand.Seed(time.Now().UnixNano())
+	randomID := rand.Intn(1000000)
+	subDir := fmt.Sprintf("%s_%d", safeName, randomID)
+
+	// Estructura: /tmp/<carpeta>/subDir/
+	baseTemp := filepath.Join("/tmp", safeName+"_temp")
+	workingDir := filepath.Join(baseTemp, subDir)
+
+	// Ruta final del ZIP
+	finalZipPath := fmt.Sprintf("/usr/bin/fd_cloud/temp/%s.zip", safeName)
+
+	// Crear carpeta temporal
+	if err := exec.Command("sudo", "mkdir", "-p", workingDir).Run(); err != nil {
+		panic(fmt.Sprintf("❌ No se pudo crear carpeta temporal de trabajo: %v", err))
+	}
+
+	// Obtener documentos
 	documentList, err := obtenerDocumentos(idFolder)
 	if err != nil {
 		panic(err)
 	}
 
-	// Crear carpetas dentro de /tmp
+	// Crear carpetas dentro del workingDir
 	for _, f := range folderList {
-		fullPath := filepath.Join(tempDir, f["path_is"])
+		fullPath := filepath.Join(workingDir, f["path_is"])
 		if err := exec.Command("sudo", "mkdir", "-p", fullPath).Run(); err != nil {
 			fmt.Println("❌ Error creando carpeta:", fullPath, err)
 		}
 	}
 
-	// Mover archivos desde /usr/bin/fd_cloud/public a la carpeta temporal
+	// Copiar documentos
 	for _, doc := range documentList {
 		origin := filepath.Join("/usr/bin/fd_cloud/public/", doc["name"])
-		dest := filepath.Join(tempDir, doc["path_is"], doc["name_real"])
+		dest := filepath.Join(workingDir, doc["path_is"], doc["name_real"])
 
-				// Intentar copiar el archivo original
 		cmd := exec.Command("sudo", "cp", origin, dest)
 		_, err := cmd.CombinedOutput()
 		if err != nil {
 			fmt.Printf("⚠️  Archivo no encontrado, creando archivo vacío: %s → %s\n", origin, dest)
 
-			// Crear archivo vacío temporal en /tmp
 			tempEmpty := filepath.Join("/tmp", "empty_temp_file")
-			createCmd := exec.Command("sudo", "touch", tempEmpty)
-			if err := createCmd.Run(); err != nil {
-				fmt.Printf("❌ No se pudo crear archivo vacío temporal: %s\n", err)
-				continue
-			}
+			_ = exec.Command("sudo", "touch", tempEmpty).Run()
 
-			// Copiar archivo vacío al destino
 			cpEmpty := exec.Command("sudo", "cp", tempEmpty, dest)
-			if out2, err2 := cpEmpty.CombinedOutput(); err2 != nil {
-				fmt.Printf("❌ Error copiando archivo vacío a destino: %s → %s\n", dest, out2)
-				continue
+			_, err2 := cpEmpty.CombinedOutput()
+			if err2 != nil {
+				fmt.Printf("❌ Error copiando archivo vacío a destino: %s\n", dest)
 			}
 		}
-
 	}
 
-	// Crear el ZIP final en la carpeta pública
-	cmd := exec.Command("sudo", "zip", "-r", finalZipPath, ".")
-	cmd.Dir = tempDir
+	// Comprimir subcarpeta
+	cmd := exec.Command("sudo", "zip", "-r", finalZipPath, subDir)
+	cmd.Dir = baseTemp
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		fmt.Printf("❌ Error creando ZIP: %s\n", out)
