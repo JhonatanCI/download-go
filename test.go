@@ -94,57 +94,73 @@ func main() {
 
 func obtenerCarpetas(idFolder int) ([]map[string]string, error) {
 	conn := database.GetDB()
-query := `
-	WITH RECURSIVE folder_tree AS (
-		SELECT id, father, name, path, 0 AS depth
-		FROM public.folder
-		WHERE id = $1 AND delete = false
+	query := `
+		WITH RECURSIVE folder_tree AS (
+			SELECT id, father, name
+			FROM public.folder
+			WHERE id = $1 AND delete = false
 
-		UNION ALL
+			UNION ALL
 
-		SELECT f.id, f.father, f.name, f.path, ft.depth + 1
-		FROM public.folder f
-		INNER JOIN folder_tree ft ON f.father = ft.id
-		WHERE f.delete = false
-	)
-	SELECT ARRAY_TO_JSON(ARRAY_AGG(ROW_TO_JSON(q))) FROM (
-		SELECT 
-			id::text,
-			path::text,
-			name,
-			(
-				WITH parts AS (
-					SELECT name, depth FROM folder_tree ORDER BY depth
-				)
-				SELECT STRING_AGG(name, '/' ORDER BY depth)
-			) AS path_is
-		FROM folder_tree
-	) q
-`
+			SELECT f.id, f.father, f.name
+			FROM public.folder f
+			INNER JOIN folder_tree ft ON f.father = ft.id
+			WHERE f.delete = false
+		)
+		SELECT id, father, name FROM folder_tree;
+	`
 
-
-
-	var data sql.NullString
-	err := conn.QueryRow(query, idFolder).Scan(&data)
+	rows, err := conn.Query(query, idFolder)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
-	var temp []map[string]interface{}
-	if err := json.Unmarshal([]byte(data.String), &temp); err != nil {
-		return nil, err
+	type folder struct {
+		ID     string
+		Father string
+		Name   string
 	}
 
-	var result []map[string]string
-	for _, item := range temp {
-		m := make(map[string]string)
-		for k, v := range item {
-			m[k] = fmt.Sprintf("%v", v)
+	// Map de ID a carpeta
+	folders := map[string]folder{}
+	// Map de ID a hijos
+	children := map[string][]string{}
+
+	for rows.Next() {
+		var f folder
+		if err := rows.Scan(&f.ID, &f.Father, &f.Name); err != nil {
+			return nil, err
 		}
-		result = append(result, m)
+		folders[f.ID] = f
+		children[f.Father] = append(children[f.Father], f.ID)
 	}
-	return result, nil
+
+	// Generar path relativo
+	var buildPaths func(id string, currentPath string)
+	results := []map[string]string{}
+
+	buildPaths = func(id string, currentPath string) {
+		f := folders[id]
+		newPath := filepath.Join(currentPath, f.Name)
+
+		results = append(results, map[string]string{
+			"id":      f.ID,
+			"name":    f.Name,
+			"path_is": newPath,
+		})
+
+		for _, childID := range children[f.ID] {
+			buildPaths(childID, newPath)
+		}
+	}
+
+	// Comenzar desde el idFolder como raíz
+	buildPaths(fmt.Sprintf("%d", idFolder), "")
+
+	return results, nil
 }
+
 
 func obtenerDocumentos(idFolder int) ([]map[string]string, error) {
 	conn := database.GetDB()
