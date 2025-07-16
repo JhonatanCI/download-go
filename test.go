@@ -46,7 +46,7 @@ func main() {
 
 	// Mover archivos usando sudo mv
 	for _, doc := range documentList {
-		origin := filepath.Join("/usr/bin/fd_cloud/public/", doc["name"])
+		origin := filepath.Join("/usr/bin/fd_cloud/temp/", doc["name"])
 		dest := filepath.Join(tempDir, doc["path_is"], doc["name_real"])
 
 		cmd := exec.Command("sudo", "mv", origin, dest)
