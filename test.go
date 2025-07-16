@@ -22,6 +22,17 @@ func main() {
 
 	idFolder := 3
 
+	// Carpeta temporal
+	tempDir := "/tmp/expediente_temp/"
+
+	// Carpeta final donde guardar el ZIP
+	finalZipPath := "/usr/bin/fd_cloud/public/expediente.zip"
+
+	// Crear carpeta temporal
+	if err := exec.Command("sudo", "mkdir", "-p", tempDir); err != nil {
+		panic(fmt.Sprintf("❌ No se pudo crear carpeta temporal: %v", err))
+	}
+
 	folderList, err := obtenerCarpetas(idFolder)
 	if err != nil {
 		panic(err)
@@ -32,41 +43,37 @@ func main() {
 		panic(err)
 	}
 
-	tempDir := "/test_expediente_no_tocar/expediente_sub/expediente1/"
-
-	// Crear carpetas usando sudo mkdir -p
+	// Crear carpetas dentro de /tmp
 	for _, f := range folderList {
 		fullPath := filepath.Join(tempDir, f["path_is"])
-		cmd := exec.Command("sudo", "mkdir", "-p", fullPath)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			fmt.Printf("❌ Error creando carpeta: %s → %s\n", fullPath, out)
+		if err :=  exec.Command("sudo", "mkdir", "-p", fullPath); err != nil {
+			fmt.Println("❌ Error creando carpeta:", fullPath, err)
 		}
 	}
 
-	// Mover archivos usando sudo mv
+	// Mover archivos desde /usr/bin/fd_cloud/public a la carpeta temporal
 	for _, doc := range documentList {
-		origin := filepath.Join("/usr/bin/fd_cloud/temp/", doc["name"])
+		origin := filepath.Join("/usr/bin/fd_cloud/public/", doc["name"])
 		dest := filepath.Join(tempDir, doc["path_is"], doc["name_real"])
 
-		cmd := exec.Command("sudo", "mv", origin, dest)
+		cmd := exec.Command("sudo", "cp", origin, dest)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			fmt.Printf("❌ Error moviendo archivo de %s a %s → %s\n", origin, dest, out)
+			fmt.Printf("❌ Error copiando archivo %s → %s → %s\n", origin, dest, out)
 		}
 	}
 
-	// Crear ZIP usando sudo zip -r
-	zipPath := filepath.Join(tempDir, "expediente.zip")
-	cmd := exec.Command("sudo", "zip", "-r", zipPath, ".")
+	// Crear el ZIP final en la carpeta pública
+	cmd := exec.Command("sudo", "zip", "-r", finalZipPath, ".")
 	cmd.Dir = tempDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		fmt.Printf("❌ Error creando ZIP → %s\n", out)
+		fmt.Printf("❌ Error creando ZIP: %s\n", out)
 	} else {
-		fmt.Println("✅ ZIP creado con éxito.")
+		fmt.Println("✅ ZIP creado en:", finalZipPath)
 	}
 }
+
 
 func obtenerCarpetas(idFolder int) ([]map[string]string, error) {
 	conn := database.GetDB()
