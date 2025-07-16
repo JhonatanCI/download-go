@@ -6,33 +6,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"tuproyecto/database"
-
-	"github.com/joho/godotenv"
 )
 
 func main() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatalf("Error cargando .env: %v", err)
-	}
-
-	fmt.Println("Verificando variables de entorno:")
-	fmt.Println("DB_HOST:", os.Getenv("DB_HOST"))
-	fmt.Println("DB_PORT:", os.Getenv("DB_PORT"))
-	fmt.Println("DB_USER:", os.Getenv("DB_USER"))
-	fmt.Println("DB_PASSWORD:", os.Getenv("DB_PASSWORD"))
-	fmt.Println("DB_NAME:", os.Getenv("DB_NAME"))
-
 	if err := database.InitDB(); err != nil {
 		panic("❌ Error conectando a la base de datos: " + err.Error())
 	}
 	defer database.CloseDB()
 
 	idFolder := 3
+
 	folderList, err := obtenerCarpetas(idFolder)
 	if err != nil {
 		panic(err)
@@ -61,7 +47,6 @@ func main() {
 		}
 	}
 
-	// Crear el ZIP
 	err = createZip(tempDir, tempDir+"expediente.zip")
 	if err != nil {
 		fmt.Println("❌ Error creando ZIP:", err)
@@ -72,17 +57,17 @@ func main() {
 
 func obtenerCarpetas(idFolder int) ([]map[string]string, error) {
 	conn := database.GetDB()
-	query := `	
+	query := `
 		with y as (
 			with y as (
-				SELECT JSONB_ARRAY_ELEMENTS(f.tree)::INT "id" 
+				SELECT JSONB_ARRAY_ELEMENTS(f.tree)::INT "id"
 				FROM public.folder f WHERE father = $1 and f.delete = false
 			),
 			ids as (
 				SELECT id FROM public.folder f WHERE father = $1 or id = $1 and f.delete = false
 			)
-			SELECT id from y  
-			UNION  
+			SELECT id from y
+			UNION
 			SELECT id from ids
 		)
 		SELECT ARRAY_TO_JSON(ARRAY_AGG(ROW_TO_JSON(q1))) FROM (
@@ -94,14 +79,29 @@ func obtenerCarpetas(idFolder int) ([]map[string]string, error) {
 			FROM public.folder f
 			WHERE f.id in (select id from y) and f.delete = false
 		) q1`
+
 	var data sql.NullString
 	err := conn.QueryRow(query, idFolder).Scan(&data)
 	if err != nil {
 		return nil, err
 	}
+
+	// Unmarshal como interface
+	var temp []map[string]interface{}
+	if err := json.Unmarshal([]byte(data.String), &temp); err != nil {
+		return nil, err
+	}
+
+	// Convertir todos los valores a string
 	var result []map[string]string
-	err = json.Unmarshal([]byte(data.String), &result)
-	return result, err
+	for _, item := range temp {
+		m := make(map[string]string)
+		for k, v := range item {
+			m[k] = fmt.Sprintf("%v", v)
+		}
+		result = append(result, m)
+	}
+	return result, nil
 }
 
 func obtenerDocumentos(idFolder int) ([]map[string]string, error) {
@@ -109,14 +109,14 @@ func obtenerDocumentos(idFolder int) ([]map[string]string, error) {
 	query := `
 		with y as (
 			with y as (
-				SELECT JSONB_ARRAY_ELEMENTS(f.tree)::INT "id" 
+				SELECT JSONB_ARRAY_ELEMENTS(f.tree)::INT "id"
 				FROM public.folder f WHERE father = $1 and f.delete = false
 			),
 			ids as (
 				SELECT id FROM public.folder f WHERE father = $1 or id = $1 and f.delete = false
 			)
-			SELECT id from y  
-			UNION  
+			SELECT id from y
+			UNION
 			SELECT id from ids
 		)
 		SELECT JSON_AGG(ROW_TO_JSON(q)) FROM (
@@ -131,14 +131,27 @@ func obtenerDocumentos(idFolder int) ([]map[string]string, error) {
 			INNER JOIN public.folder f ON f.id = d.folder
 			WHERE d.delete = false AND d.trash = false AND f.id IN (SELECT id FROM y)
 		) q`
+
 	var data sql.NullString
 	err := conn.QueryRow(query, idFolder).Scan(&data)
 	if err != nil {
 		return nil, err
 	}
+
+	var temp []map[string]interface{}
+	if err := json.Unmarshal([]byte(data.String), &temp); err != nil {
+		return nil, err
+	}
+
 	var result []map[string]string
-	err = json.Unmarshal([]byte(data.String), &result)
-	return result, err
+	for _, item := range temp {
+		m := make(map[string]string)
+		for k, v := range item {
+			m[k] = fmt.Sprintf("%v", v)
+		}
+		result = append(result, m)
+	}
+	return result, nil
 }
 
 func createZip(source, target string) error {
