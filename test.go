@@ -95,27 +95,30 @@ func main() {
 func obtenerCarpetas(idFolder int) ([]map[string]string, error) {
 	conn := database.GetDB()
 	query := `
-		with y as (
-			with y as (
-				SELECT JSONB_ARRAY_ELEMENTS(f.tree)::INT "id"
-				FROM public.folder f WHERE father = $1 and f.delete = false
-			),
-			ids as (
-				SELECT id FROM public.folder f WHERE father = $1 or id = $1 and f.delete = false
-			)
-			SELECT id from y
-			UNION
-			SELECT id from ids
-		)
-		SELECT ARRAY_TO_JSON(ARRAY_AGG(ROW_TO_JSON(q1))) FROM (
-			SELECT 
-				f.id::text,
-				f.path::text,
-				f.name,
-				(CASE WHEN f.path = '/' THEN f.path || f.name ELSE f.path || '/' || f.name END) "path_is"
-			FROM public.folder f
-			WHERE f.id in (select id from y) and f.delete = false
-		) q1`
+	WITH RECURSIVE folder_tree AS (
+		SELECT id, father, name, path
+		FROM public.folder
+		WHERE id = $1 AND delete = false
+
+		UNION ALL
+
+		SELECT f.id, f.father, f.name, f.path
+		FROM public.folder f
+		INNER JOIN folder_tree ft ON f.father = ft.id
+		WHERE f.delete = false
+	)
+	SELECT ARRAY_TO_JSON(ARRAY_AGG(ROW_TO_JSON(q))) FROM (
+		SELECT 
+			id::text,
+			path::text,
+			name,
+			CASE 
+				WHEN path = '/' THEN path || name 
+				ELSE path || '/' || name 
+			END AS path_is
+		FROM folder_tree
+	) q`
+
 
 	var data sql.NullString
 	err := conn.QueryRow(query, idFolder).Scan(&data)
