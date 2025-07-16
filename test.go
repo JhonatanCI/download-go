@@ -9,9 +9,15 @@ import (
 	"os"
 	"path/filepath"
 	"tuproyecto/database"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
+
+	if err := godotenv.Load(); err != nil {
+        panic("No se pudo cargar el archivo .env: " + err.Error())
+    }
 	if err := database.InitDB(); err != nil {
 		panic("❌ Error conectando a la base de datos: " + err.Error())
 	}
