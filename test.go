@@ -76,7 +76,7 @@ func main() {
 
 	// Copiar documentos
 	for _, doc := range documentList {
-		origin := filepath.Join("/usr/bin/fd_cloud/public/", doc["name"])
+		origin := filepath.Join("/usr/bin/fd_cloud/temp/", doc["name"])
 		dest := filepath.Join(workingDir, doc["path_is"], doc["name_real"])
 
 		cmd := exec.Command("sudo", "cp", origin, dest)
