@@ -1,12 +1,10 @@
 package main
 
 import (
-	"archive/zip"
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
-	"os"
+	"os/exec"
 	"path/filepath"
 	"tuproyecto/database"
 
@@ -14,10 +12,9 @@ import (
 )
 
 func main() {
-
 	if err := godotenv.Load(); err != nil {
-        panic("No se pudo cargar el archivo .env: " + err.Error())
-    }
+		panic("No se pudo cargar el archivo .env: " + err.Error())
+	}
 	if err := database.InitDB(); err != nil {
 		panic("❌ Error conectando a la base de datos: " + err.Error())
 	}
@@ -36,26 +33,36 @@ func main() {
 	}
 
 	tempDir := "/test_expediente_no_tocar/expediente_sub/expediente1/"
+
+	// Crear carpetas usando sudo mkdir -p
 	for _, f := range folderList {
 		fullPath := filepath.Join(tempDir, f["path_is"])
-		if err := os.MkdirAll(fullPath, 0755); err != nil {
-			fmt.Println("❌ Error creando carpeta:", fullPath, err)
+		cmd := exec.Command("sudo", "mkdir", "-p", fullPath)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			fmt.Printf("❌ Error creando carpeta: %s → %s\n", fullPath, out)
 		}
 	}
 
+	// Mover archivos usando sudo mv
 	for _, doc := range documentList {
 		origin := filepath.Join("/usr/bin/fd_cloud/public/", doc["name"])
 		dest := filepath.Join(tempDir, doc["path_is"], doc["name_real"])
 
-		err := os.Rename(origin, dest)
+		cmd := exec.Command("sudo", "mv", origin, dest)
+		out, err := cmd.CombinedOutput()
 		if err != nil {
-			fmt.Println("❌ Error moviendo archivo:", err)
+			fmt.Printf("❌ Error moviendo archivo de %s a %s → %s\n", origin, dest, out)
 		}
 	}
 
-	err = createZip(tempDir, tempDir+"expediente.zip")
+	// Crear ZIP usando sudo zip -r
+	zipPath := filepath.Join(tempDir, "expediente.zip")
+	cmd := exec.Command("sudo", "zip", "-r", zipPath, ".")
+	cmd.Dir = tempDir
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		fmt.Println("❌ Error creando ZIP:", err)
+		fmt.Printf("❌ Error creando ZIP → %s\n", out)
 	} else {
 		fmt.Println("✅ ZIP creado con éxito.")
 	}
@@ -92,13 +99,11 @@ func obtenerCarpetas(idFolder int) ([]map[string]string, error) {
 		return nil, err
 	}
 
-	// Unmarshal como interface
 	var temp []map[string]interface{}
 	if err := json.Unmarshal([]byte(data.String), &temp); err != nil {
 		return nil, err
 	}
 
-	// Convertir todos los valores a string
 	var result []map[string]string
 	for _, item := range temp {
 		m := make(map[string]string)
@@ -158,53 +163,4 @@ func obtenerDocumentos(idFolder int) ([]map[string]string, error) {
 		result = append(result, m)
 	}
 	return result, nil
-}
-
-func createZip(source, target string) error {
-	zipFile, err := os.Create(target)
-	if err != nil {
-		return err
-	}
-	defer zipFile.Close()
-
-	zipWriter := zip.NewWriter(zipFile)
-	defer zipWriter.Close()
-
-	err = filepath.Walk(source, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if path == target {
-			return nil
-		}
-		header, err := zip.FileInfoHeader(info)
-		if err != nil {
-			return err
-		}
-
-		header.Name, _ = filepath.Rel(source, path)
-		if info.IsDir() {
-			header.Name += "/"
-		} else {
-			header.Method = zip.Deflate
-		}
-
-		writer, err := zipWriter.CreateHeader(header)
-		if err != nil {
-			return err
-		}
-
-		if !info.IsDir() {
-			file, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			defer file.Close()
-			_, err = io.Copy(writer, file)
-			return err
-		}
-		return nil
-	})
-
-	return err
 }
