@@ -1,0 +1,176 @@
+package main
+
+import (
+	"archive/zip"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"tuproyecto/database"
+)
+
+func main() {
+	if err := database.InitDB(); err != nil {
+		panic("❌ Error conectando a la base de datos: " + err.Error())
+	}
+	defer database.CloseDB()
+
+	idFolder := 3
+	folderList, err := obtenerCarpetas(idFolder)
+	if err != nil {
+		panic(err)
+	}
+
+	documentList, err := obtenerDocumentos(idFolder)
+	if err != nil {
+		panic(err)
+	}
+
+	tempDir := "/test_expediente_no_tocar/expediente_sub/expediente1/"
+	for _, f := range folderList {
+		fullPath := filepath.Join(tempDir, f["path_is"])
+		if err := os.MkdirAll(fullPath, 0755); err != nil {
+			fmt.Println("❌ Error creando carpeta:", fullPath, err)
+		}
+	}
+
+	for _, doc := range documentList {
+		origin := filepath.Join("/usr/bin/fd_cloud/public/", doc["name"])
+		dest := filepath.Join(tempDir, doc["path_is"], doc["name_real"])
+
+		err := os.Rename(origin, dest)
+		if err != nil {
+			fmt.Println("❌ Error moviendo archivo:", err)
+		}
+	}
+
+	// Crear el ZIP
+	err = createZip(tempDir, tempDir+"expediente.zip")
+	if err != nil {
+		fmt.Println("❌ Error creando ZIP:", err)
+	} else {
+		fmt.Println("✅ ZIP creado con éxito.")
+	}
+}
+
+func obtenerCarpetas(idFolder int) ([]map[string]string, error) {
+	conn := database.GetDB()
+	query := `	
+		with y as (
+			with y as (
+				SELECT JSONB_ARRAY_ELEMENTS(f.tree)::INT "id" 
+				FROM public.folder f WHERE father = $1 and f.delete = false
+			),
+			ids as (
+				SELECT id FROM public.folder f WHERE father = $1 or id = $1 and f.delete = false
+			)
+			SELECT id from y  
+			UNION  
+			SELECT id from ids
+		)
+		SELECT ARRAY_TO_JSON(ARRAY_AGG(ROW_TO_JSON(q1))) FROM (
+			SELECT 
+				f.id::text,
+				f.path::text,
+				f.name,
+				(CASE WHEN f.path = '/' THEN f.path || f.name ELSE f.path || '/' || f.name END) "path_is"
+			FROM public.folder f
+			WHERE f.id in (select id from y) and f.delete = false
+		) q1`
+	var data sql.NullString
+	err := conn.QueryRow(query, idFolder).Scan(&data)
+	if err != nil {
+		return nil, err
+	}
+	var result []map[string]string
+	err = json.Unmarshal([]byte(data.String), &result)
+	return result, err
+}
+
+func obtenerDocumentos(idFolder int) ([]map[string]string, error) {
+	conn := database.GetDB()
+	query := `
+		with y as (
+			with y as (
+				SELECT JSONB_ARRAY_ELEMENTS(f.tree)::INT "id" 
+				FROM public.folder f WHERE father = $1 and f.delete = false
+			),
+			ids as (
+				SELECT id FROM public.folder f WHERE father = $1 or id = $1 and f.delete = false
+			)
+			SELECT id from y  
+			UNION  
+			SELECT id from ids
+		)
+		SELECT JSON_AGG(ROW_TO_JSON(q)) FROM (
+			SELECT 
+				d.id,
+				d.agent,
+				d.folder,
+				doc_data->>'name' AS name_real,
+				d.name AS name,
+				(CASE WHEN f.path = '/' THEN f.path || f.name ELSE f.path || '/' || f.name END) AS path_is
+			FROM public.document d
+			INNER JOIN public.folder f ON f.id = d.folder
+			WHERE d.delete = false AND d.trash = false AND f.id IN (SELECT id FROM y)
+		) q`
+	var data sql.NullString
+	err := conn.QueryRow(query, idFolder).Scan(&data)
+	if err != nil {
+		return nil, err
+	}
+	var result []map[string]string
+	err = json.Unmarshal([]byte(data.String), &result)
+	return result, err
+}
+
+func createZip(source, target string) error {
+	zipFile, err := os.Create(target)
+	if err != nil {
+		return err
+	}
+	defer zipFile.Close()
+
+	zipWriter := zip.NewWriter(zipFile)
+	defer zipWriter.Close()
+
+	err = filepath.Walk(source, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == target {
+			return nil
+		}
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+
+		header.Name, _ = filepath.Rel(source, path)
+		if info.IsDir() {
+			header.Name += "/"
+		} else {
+			header.Method = zip.Deflate
+		}
+
+		writer, err := zipWriter.CreateHeader(header)
+		if err != nil {
+			return err
+		}
+
+		if !info.IsDir() {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+			_, err = io.Copy(writer, file)
+			return err
+		}
+		return nil
+	})
+
+	return err
+}
