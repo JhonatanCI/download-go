@@ -56,11 +56,28 @@ func main() {
 		origin := filepath.Join("/usr/bin/fd_cloud/public/", doc["name"])
 		dest := filepath.Join(tempDir, doc["path_is"], doc["name_real"])
 
+				// Intentar copiar el archivo original
 		cmd := exec.Command("sudo", "cp", origin, dest)
-		out, err := cmd.CombinedOutput()
+		_, err := cmd.CombinedOutput()
 		if err != nil {
-			fmt.Printf("❌ Error copiando archivo %s → %s → %s\n", origin, dest, out)
+			fmt.Printf("⚠️  Archivo no encontrado, creando archivo vacío: %s → %s\n", origin, dest)
+
+			// Crear archivo vacío temporal en /tmp
+			tempEmpty := filepath.Join("/tmp", "empty_temp_file")
+			createCmd := exec.Command("sudo", "touch", tempEmpty)
+			if err := createCmd.Run(); err != nil {
+				fmt.Printf("❌ No se pudo crear archivo vacío temporal: %s\n", err)
+				continue
+			}
+
+			// Copiar archivo vacío al destino
+			cpEmpty := exec.Command("sudo", "cp", tempEmpty, dest)
+			if out2, err2 := cpEmpty.CombinedOutput(); err2 != nil {
+				fmt.Printf("❌ Error copiando archivo vacío a destino: %s → %s\n", dest, out2)
+				continue
+			}
 		}
+
 	}
 
 	// Crear el ZIP final en la carpeta pública
