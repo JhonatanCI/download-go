@@ -1,14 +1,14 @@
 package main
 
 import (
-	"database/sql"
-	"encoding/json"
+
 	"fmt"
 	"os/exec"
 	"path/filepath"
 	"tuproyecto/database"
 
 	"github.com/joho/godotenv"
+	"github.com/lib/pq"
 )
 
 func main() {
@@ -161,53 +161,122 @@ func obtenerCarpetas(idFolder int) ([]map[string]string, error) {
 	return results, nil
 }
 
-
 func obtenerDocumentos(idFolder int) ([]map[string]string, error) {
 	conn := database.GetDB()
-	query := `
-		with y as (
-			with y as (
-				SELECT JSONB_ARRAY_ELEMENTS(f.tree)::INT "id"
-				FROM public.folder f WHERE father = $1 and f.delete = false
-			),
-			ids as (
-				SELECT id FROM public.folder f WHERE father = $1 or id = $1 and f.delete = false
-			)
-			SELECT id from y
-			UNION
-			SELECT id from ids
-		)
-		SELECT JSON_AGG(ROW_TO_JSON(q)) FROM (
-			SELECT 
-				d.id,
-				d.agent,
-				d.folder,
-				doc_data->>'name' AS name_real,
-				d.name AS name,
-				(CASE WHEN f.path = '/' THEN f.path || f.name ELSE f.path || '/' || f.name END) AS path_is
-			FROM public.document d
-			INNER JOIN public.folder f ON f.id = d.folder
-			WHERE d.delete = false AND d.trash = false AND f.id IN (SELECT id FROM y)
-		) q`
 
-	var data sql.NullString
-	err := conn.QueryRow(query, idFolder).Scan(&data)
+	// 1. Traemos todos los folders necesarios (padres e hijos)
+	folderQuery := `
+		WITH RECURSIVE folder_tree AS (
+			SELECT id, father, name
+			FROM public.folder
+			WHERE id = $1 AND delete = false
+
+			UNION ALL
+
+			SELECT f.id, f.father, f.name
+			FROM public.folder f
+			INNER JOIN folder_tree ft ON f.father = ft.id
+			WHERE f.delete = false
+		)
+		SELECT id, father, name FROM folder_tree;
+	`
+
+	rows, err := conn.Query(folderQuery, idFolder)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
-	var temp []map[string]interface{}
-	if err := json.Unmarshal([]byte(data.String), &temp); err != nil {
+	type folder struct {
+		ID     string
+		Father string
+		Name   string
+	}
+
+	folders := map[string]folder{}
+	children := map[string][]string{}
+
+	for rows.Next() {
+		var f folder
+		if err := rows.Scan(&f.ID, &f.Father, &f.Name); err != nil {
+			return nil, err
+		}
+		folders[f.ID] = f
+		children[f.Father] = append(children[f.Father], f.ID)
+	}
+
+	// Generar path relativo de folders
+	folderPaths := map[string]string{}
+
+	var buildPaths func(id string, currentPath string)
+	buildPaths = func(id string, currentPath string) {
+		f := folders[id]
+		newPath := filepath.Join(currentPath, f.Name)
+		folderPaths[id] = newPath
+
+		for _, childID := range children[f.ID] {
+			buildPaths(childID, newPath)
+		}
+	}
+	buildPaths(fmt.Sprintf("%d", idFolder), "")
+
+	// 2. Traemos los documentos de esos folders
+	docQuery := `
+		SELECT 
+			d.id,
+			d.agent,
+			d.folder,
+			doc_data->>'name' AS name_real,
+			d.name AS name
+		FROM public.document d
+		WHERE d.delete = false AND d.trash = false AND d.folder = ANY($1)
+	`
+
+	// Construir lista de folder IDs
+	var folderIDs []interface{}
+	for folderID := range folderPaths {
+		folderIDs = append(folderIDs, folderID)
+	}
+
+	// Convierte folderIDs a []string para la consulta
+	folderIDsStr := make([]string, len(folderIDs))
+	for i, id := range folderIDs {
+		folderIDsStr[i] = fmt.Sprintf("%v", id)
+	}
+
+	// Ejecutar consulta
+	docRows, err := conn.Query(docQuery, pq.Array(folderIDsStr))
+	if err != nil {
 		return nil, err
+	}
+	defer docRows.Close()
+
+	type document struct {
+		ID        string
+		Agent     string
+		FolderID  string
+		NameReal  string
+		NameSave  string
 	}
 
 	var result []map[string]string
-	for _, item := range temp {
-		m := make(map[string]string)
-		for k, v := range item {
-			m[k] = fmt.Sprintf("%v", v)
+
+	for docRows.Next() {
+		var d document
+		if err := docRows.Scan(&d.ID, &d.Agent, &d.FolderID, &d.NameReal, &d.NameSave); err != nil {
+			return nil, err
 		}
-		result = append(result, m)
+
+		path := folderPaths[d.FolderID]
+
+		result = append(result, map[string]string{
+			"id":        d.ID,
+			"name_real": d.NameReal,
+			"name":      d.NameSave,
+			"folder":    d.FolderID,
+			"path_is":   path,
+		})
 	}
+
 	return result, nil
 }
