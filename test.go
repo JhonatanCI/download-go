@@ -6,12 +6,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"tuproyecto/database"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatalf("Error cargando .env: %v", err)
+	}
+
+	
 	if err := database.InitDB(); err != nil {
 		panic("❌ Error conectando a la base de datos: " + err.Error())
 	}
