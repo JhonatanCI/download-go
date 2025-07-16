@@ -94,29 +94,33 @@ func main() {
 
 func obtenerCarpetas(idFolder int) ([]map[string]string, error) {
 	conn := database.GetDB()
-	query := `
+query := `
 	WITH RECURSIVE folder_tree AS (
-		SELECT id, father, name, path
+		SELECT id
 		FROM public.folder
 		WHERE id = $1 AND delete = false
 
 		UNION ALL
 
-		SELECT f.id, f.father, f.name, f.path
+		SELECT f.id
 		FROM public.folder f
 		INNER JOIN folder_tree ft ON f.father = ft.id
 		WHERE f.delete = false
 	)
-	SELECT ARRAY_TO_JSON(ARRAY_AGG(ROW_TO_JSON(q))) FROM (
+	SELECT JSON_AGG(ROW_TO_JSON(q)) FROM (
 		SELECT 
-			id::text,
-			path::text,
-			name,
+			d.id,
+			d.agent,
+			d.folder,
+			doc_data->>'name' AS name_real,
+			d.name AS name,
 			CASE 
-				WHEN path = '/' THEN path || name 
-				ELSE path || '/' || name 
+				WHEN f.path = '/' THEN f.path || f.name 
+				ELSE f.path || '/' || f.name 
 			END AS path_is
-		FROM folder_tree
+		FROM public.document d
+		INNER JOIN public.folder f ON f.id = d.folder
+		WHERE d.delete = false AND d.trash = false AND f.id IN (SELECT id FROM folder_tree)
 	) q`
 
 
