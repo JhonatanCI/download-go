@@ -26,10 +26,10 @@ func main() {
 	tempDir := "/tmp/expediente_temp/"
 
 	// Carpeta final donde guardar el ZIP
-	finalZipPath := "/usr/bin/fd_cloud/public/expediente.zip"
+	finalZipPath := "/usr/bin/fd_cloud/temp/expediente.zip"
 
 	// Crear carpeta temporal
-	if err := exec.Command("sudo", "mkdir", "-p", tempDir); err != nil {
+	if err := exec.Command("sudo", "mkdir", "-p", tempDir).Run(); err != nil {
 		panic(fmt.Sprintf("❌ No se pudo crear carpeta temporal: %v", err))
 	}
 
@@ -46,7 +46,7 @@ func main() {
 	// Crear carpetas dentro de /tmp
 	for _, f := range folderList {
 		fullPath := filepath.Join(tempDir, f["path_is"])
-		if err :=  exec.Command("sudo", "mkdir", "-p", fullPath); err != nil {
+		if err := exec.Command("sudo", "mkdir", "-p", fullPath).Run(); err != nil {
 			fmt.Println("❌ Error creando carpeta:", fullPath, err)
 		}
 	}
