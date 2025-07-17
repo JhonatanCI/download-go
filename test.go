@@ -41,16 +41,21 @@ func main() {
 		panic(fmt.Sprintf("❌ No se encontró el nombre de la carpeta con ID %d", idFolder))
 	}
 
+	// Obtener nombre de la carpeta raíz
 	safeName := strings.ReplaceAll(rootName, " ", "_")
 
-	// Crear ID aleatorio para subcarpeta
+	// Carpeta temporal base con ID aleatorio
 	rand.Seed(time.Now().UnixNano())
 	randomID := rand.Intn(1000000)
 	subDir := fmt.Sprintf("%s_%d", safeName, randomID)
 
-	// Estructura: /tmp/<carpeta>/subDir/
-	baseTemp := filepath.Join("/tmp", safeName+"_temp")
-	workingDir := filepath.Join(baseTemp, subDir)
+	baseTemp := filepath.Join("/tmp", subDir)
+	workingDir := filepath.Join(baseTemp, safeName) // Aquí irá nivel_2
+
+	// Crear estructura base
+	if err := exec.Command("sudo", "mkdir", "-p", workingDir).Run(); err != nil {
+		panic(fmt.Sprintf("❌ No se pudo crear carpeta temporal de trabajo: %v", err))
+	}
 
 	// Ruta final del ZIP
 	finalZipPath := fmt.Sprintf("/usr/bin/fd_cloud/temp/%s.zip", safeName)
@@ -96,7 +101,7 @@ func main() {
 	}
 
 	// Comprimir subcarpeta
-	cmd := exec.Command("sudo", "zip", "-r", finalZipPath, subDir)
+	cmd := exec.Command("sudo", "zip", "-r", finalZipPath, safeName)
 	cmd.Dir = baseTemp
 	out, err := cmd.CombinedOutput()
 	if err != nil {
